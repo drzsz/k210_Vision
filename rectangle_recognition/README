@@ -1,0 +1,6 @@
+K210实现矩形边框识别
+
+1.1_rectangle_edge_detection 实现矩形边框显示
+2.2_rectangle_recognition 在1的基础上将矩形边框的四个顶点坐标显示
+3.3_rectangle_recognition_normal 在2的基础上加上了当出现矩形框时显示平均矩形，但局限于正放的矩形
+4.4_rectangle_recognition_anyangle 在3的基础上，不再局限于正放，矩形旋转任何角度依然能识别到

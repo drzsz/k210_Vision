@@ -1,0 +1,136 @@
+import sensor
+import image
+import lcd
+import math
+
+# 初始化LCD显示屏
+lcd.init()
+
+# 初始化摄像头
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QVGA)
+sensor.set_vflip(False)
+sensor.run(1)
+
+# 缩放图像
+def scale_image(img, scale):
+    width = img.width() // scale
+    height = img.height() // scale
+    img_scaled = img.resize(width, height)
+    return img_scaled
+
+# 自动估算边框宽度（根据矩形大小比例）
+def estimate_border_width(w, h):
+    min_dim = min(w, h)
+    return max(2, int(min_dim * 0.05))
+
+# 确保顶点顺序为顺时针
+def ensure_clockwise(corners):
+    if len(corners) != 4:
+        return corners
+
+    # 计算多边形面积（判断顶点顺序）
+    area = 0
+    for i in range(4):
+        x1, y1 = corners[i]
+        x2, y2 = corners[(i + 1) % 4]
+        area += (x1 * y2 - x2 * y1)
+
+    # 如果面积为负，说明是逆时针，需要反转
+    return corners if area > 0 else [corners[3], corners[2], corners[1], corners[0]]
+
+# 计算两点的中点
+def midpoint(p1, p2):
+    return ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2)
+
+# 计算两点之间的距离
+def distance(p1, p2):
+    return math.sqrt((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2)
+
+while True:
+    img = sensor.snapshot()
+    img_scaled = scale_image(img, 2)  # 将图像缩小为原来的一半
+    rects = img_scaled.find_rects(threshold=50000)
+
+    for rect in rects:
+        # 获取缩放后图像上的矩形顶点
+        corners = rect.corners()
+        corners = ensure_clockwise(corners)  # 确保顺时针顺序
+
+        # 计算矩形的中心点（缩放图像上）
+        center_x = sum(p[0] for p in corners) / 4
+        center_y = sum(p[1] for p in corners) / 4
+
+        # 估算边框宽度（在缩放图像上）
+        w_scaled = distance(corners[0], corners[1])
+        h_scaled = distance(corners[1], corners[2])
+        border_width_scaled = estimate_border_width(w_scaled, h_scaled)
+
+        # 计算四条边的向量
+        edges = []
+        for i in range(4):
+            x0, y0 = corners[i]
+            x1, y1 = corners[(i + 1) % 4]
+            dx = x1 - x0
+            dy = y1 - y0
+            edges.append((dx, dy))
+
+        # 计算单位法向量（指向内部）
+        normals = []
+        for dx, dy in edges:
+            length = math.sqrt(dx*dx + dy*dy)
+            if length < 1e-5:
+                normals.append((0, 0))
+            else:
+                # 逆时针旋转90度得到指向内部的法向量
+                normals.append((-dy/length, dx/length))
+
+        # 计算内矩形的顶点（在缩放图像上）
+        inner_corners_scaled = []
+        for i in range(4):
+            x, y = corners[i]
+            # 获取相邻两条边的法向量
+            normal_prev = normals[(i - 1) % 4]
+            normal_curr = normals[i]
+
+            # 计算新顶点位置
+            new_x = x + (normal_prev[0] + normal_curr[0]) * border_width_scaled
+            new_y = y + (normal_prev[1] + normal_curr[1]) * border_width_scaled
+            inner_corners_scaled.append((new_x, new_y))
+
+        # 将坐标放大到原始图像尺寸
+        outer_corners_orig = [(x*2, y*2) for (x, y) in corners]
+        inner_corners_orig = [(x*2, y*2) for (x, y) in inner_corners_scaled]
+
+        # 计算平均矩形的顶点（原始图像尺寸）
+        avg_corners = []
+        for i in range(4):
+            avg_x = int((outer_corners_orig[i][0] + inner_corners_orig[i][0]) / 2)
+            avg_y = int((outer_corners_orig[i][1] + inner_corners_orig[i][1]) / 2)
+            avg_corners.append((avg_x, avg_y))
+
+        # 在原始图像上绘制平均矩形（蓝色）
+        for i in range(4):
+            start_point = avg_corners[i]
+            end_point = avg_corners[(i + 1) % 4]
+            img.draw_line(start_point[0], start_point[1],
+                         end_point[0], end_point[1],
+                         color=(0, 0, 255), thickness=2)
+
+        # 绘制平均矩形的四个顶点（绿色）
+        for (x, y) in avg_corners:
+            img.draw_circle(x, y, 5, color=(0, 255, 0), thickness=2)
+            # 使用.format()进行字符串格式化
+            coord_str = "({}, {})".format(int(x), int(y))
+            # 确保坐标不超出屏幕边界
+            if x < img.width() - 50 and y < img.height() - 20:
+                img.draw_string(int(x), int(y), coord_str,
+                               color=(255, 255, 255), scale=1.0)
+
+        # 打印顶点坐标
+        print("Avg Rectangle Corners:")
+        for i, (x, y) in enumerate(avg_corners):
+            print("Corner {}: ({}, {})".format(i, int(x), int(y)))
+
+    lcd.display(img)
